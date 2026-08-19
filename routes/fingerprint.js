@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../db/client.js';
+import { query, queryOne } from '../db/client.js';
 
 const router = Router();
 
@@ -7,22 +7,27 @@ router.get('/match', async (req, res) => {
   try {
     const { sector, province, budget_range, methodology, country_code, limit: maxResults } = req.query;
 
-    let query = supabase.from('fingerprints').select('*');
+    const conditions = [];
+    const vals = [];
+    let i = 1;
 
-    if (sector) query = query.eq('sector', sector);
-    if (province) query = query.eq('province', province);
-    if (budget_range) query = query.eq('budget_range', budget_range);
-    if (methodology) query = query.eq('methodology', methodology);
-    if (country_code) query = query.eq('country_code', country_code);
+    if (sector) { conditions.push(`sector = $${i++}`); vals.push(sector); }
+    if (province) { conditions.push(`province = $${i++}`); vals.push(province); }
+    if (budget_range) { conditions.push(`budget_range = $${i++}`); vals.push(budget_range); }
+    if (methodology) { conditions.push(`methodology = $${i++}`); vals.push(methodology); }
+    if (country_code) { conditions.push(`country_code = $${i++}`); vals.push(country_code); }
 
-    query = query.limit(parseInt(maxResults) || 20);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    vals.push(parseInt(maxResults) || 20);
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const rows = await query(
+      `SELECT * FROM fingerprints ${where} LIMIT $${i}`,
+      vals
+    );
 
     res.json({
-      matches: data,
-      total: data.length,
+      matches: rows,
+      total: rows.length,
       dimensions: ['team', 'risk', 'delivery', 'governance', 'esg', 'supply_chain', 'complexity']
     });
   } catch (err) {
@@ -35,21 +40,14 @@ router.post('/match-project', async (req, res) => {
     const { project_id } = req.body;
     if (!project_id) return res.status(400).json({ error: 'project_id is required' });
 
-    const { data: project } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('id', project_id)
-      .eq('org_id', req.user.org_id)
-      .single();
-
+    const project = await queryOne(
+      'SELECT * FROM projects WHERE id = $1 AND org_id = $2',
+      [project_id, req.user.org_id]
+    );
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const { data: fingerprints } = await supabase
-      .from('fingerprints')
-      .select('*')
-      .limit(100);
-
-    if (!fingerprints?.length) {
+    const fingerprints = await query('SELECT * FROM fingerprints LIMIT 100');
+    if (!fingerprints.length) {
       return res.json({ matches: [], message: 'No fingerprint data available' });
     }
 
@@ -84,11 +82,7 @@ router.post('/match-project', async (req, res) => {
         complexity: fp.complexity_score || 0
       };
 
-      return {
-        ...fp,
-        match_score: factors > 0 ? Math.round((score / (factors * 20)) * 100) : 0,
-        dimensions
-      };
+      return { ...fp, match_score: factors > 0 ? Math.round((score / (factors * 20)) * 100) : 0, dimensions };
     });
 
     scored.sort((a, b) => b.match_score - a.match_score);
@@ -105,34 +99,18 @@ router.post('/match-project', async (req, res) => {
 
 router.get('/stats', async (req, res) => {
   try {
-    const { count: total } = await supabase
-      .from('fingerprints')
-      .select('*', { count: 'exact', head: true });
-
-    const { count: verified } = await supabase
-      .from('fingerprints')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_verified', true);
-
-    const { data: sectors } = await supabase
-      .from('fingerprints')
-      .select('sector')
-      .not('sector', 'is', null);
-
-    const uniqueSectors = [...new Set(sectors?.map(s => s.sector) || [])];
-
-    const { data: countries } = await supabase
-      .from('fingerprints')
-      .select('country_code')
-      .not('country_code', 'is', null);
-
-    const uniqueCountries = [...new Set(countries?.map(c => c.country_code) || [])];
+    const [totalRow, verifiedRow, sectorsRows, countriesRows] = await Promise.all([
+      queryOne('SELECT COUNT(*)::int AS count FROM fingerprints'),
+      queryOne('SELECT COUNT(*)::int AS count FROM fingerprints WHERE is_verified = true'),
+      query('SELECT DISTINCT sector FROM fingerprints WHERE sector IS NOT NULL'),
+      query('SELECT DISTINCT country_code FROM fingerprints WHERE country_code IS NOT NULL')
+    ]);
 
     res.json({
-      total: total || 0,
-      verified: verified || 0,
-      sectors: uniqueSectors.length,
-      countries: uniqueCountries.length,
+      total: totalRow?.count || 0,
+      verified: verifiedRow?.count || 0,
+      sectors: sectorsRows.length,
+      countries: countriesRows.length,
       dimensions: 7,
       sub_indicators: 142
     });

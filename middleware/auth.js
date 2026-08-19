@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken';
-import { supabase } from '../db/client.js';
 
 export function authenticate(req, res, next) {
   const header = req.headers.authorization;
@@ -7,10 +6,8 @@ export function authenticate(req, res, next) {
     return res.status(401).json({ error: 'Missing or invalid authorization header' });
   }
 
-  const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
+    req.user = jwt.verify(header.slice(7), process.env.JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
