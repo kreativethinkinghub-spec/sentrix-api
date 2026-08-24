@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
+import { requireRole } from '../middleware/auth.js';
+import { broadcast, hasKeys } from '../db/alerts.js';
 
 const router = Router();
+const CAN_WRITE = requireRole('admin', 'director', 'pm', 'risk');
 
 router.get('/:projectId', async (req, res) => {
   try {
@@ -17,7 +20,7 @@ router.get('/:projectId', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', CAN_WRITE, async (req, res) => {
   try {
     const { project_id, type, title, description, probability, impact, rag_status, mitigation, owner_id, target_date } = req.body;
     if (!project_id || !title) return res.status(400).json({ error: 'project_id and title are required' });
@@ -40,6 +43,18 @@ router.post('/', async (req, res) => {
           [m.user_id, project_id, `Red risk raised: ${title}`, description || title, `/dashboard?project=${project_id}&view=risks`]
         );
       }
+      // Best-effort WhatsApp/SMS to opted-in members (inert without Twilio creds).
+      if (hasKeys()) {
+        try {
+          const phones = await query(
+            `SELECT DISTINCT u.phone FROM users u
+             JOIN project_members pm ON pm.user_id = u.id
+             WHERE pm.project_id = $1 AND u.is_active = TRUE AND u.alerts_optin = TRUE AND u.phone IS NOT NULL`,
+            [project_id]
+          );
+          await broadcast(phones.map(p => p.phone), `SENTRIX 🔴 Red risk raised: ${title}`, 'whatsapp');
+        } catch { /* never block risk creation on an alert failure */ }
+      }
     }
 
     res.status(201).json(row);
@@ -48,7 +63,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', CAN_WRITE, async (req, res) => {
   try {
     const allowed = ['title','description','type','probability','impact','rag_status','mitigation','owner_id','status','target_date','resolved_date'];
     const sets = [];

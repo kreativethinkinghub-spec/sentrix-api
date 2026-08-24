@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query, queryOne } from '../db/client.js';
+import { verifyTOTP } from '../db/totp.js';
 
 const router = Router();
 
@@ -54,7 +55,7 @@ router.post('/login', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
 
     const user = await queryOne(
-      'SELECT id, email, password_hash, full_name, role, is_org_admin, org_id, is_active FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, full_name, role, is_org_admin, org_id, is_active, mfa_enabled, mfa_secret FROM users WHERE email = $1',
       [email.toLowerCase()]
     );
 
@@ -63,6 +64,13 @@ router.post('/login', async (req, res) => {
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+    // MFA gate — only for users who have turned it on.
+    if (user.mfa_enabled) {
+      const { code } = req.body;
+      if (!code) return res.status(401).json({ error: 'Authenticator code required', mfa_required: true });
+      if (!verifyTOTP(user.mfa_secret, code)) return res.status(401).json({ error: 'Invalid authenticator code', mfa_required: true });
+    }
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, org_id: user.org_id, is_org_admin: user.is_org_admin },

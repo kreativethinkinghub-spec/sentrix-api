@@ -1,7 +1,44 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
+import { vectorOf, projectToVector, cosine } from '../db/vectorize.js';
 
 const router = Router();
+
+// Vector match: recall a candidate set (SQL), then re-rank by cosine similarity
+// of the feature vectors — real "vector recall + weighted re-rank".
+router.post('/match-smart', async (req, res) => {
+  try {
+    const { project_id } = req.body;
+    if (!project_id) return res.status(400).json({ error: 'project_id is required' });
+    const project = await queryOne('SELECT * FROM projects WHERE id = $1 AND org_id = $2', [project_id, req.user.org_id]);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Recall stage — narrow the 100k to a candidate pool.
+    let candidates = await query(
+      'SELECT * FROM fingerprints WHERE sector = $1 OR methodology = $2 LIMIT 3000',
+      [project.sector, project.methodology]
+    );
+    if (candidates.length < 50) candidates = await query('SELECT * FROM fingerprints LIMIT 3000');
+
+    const qv = projectToVector(project);
+    const matches = candidates.map(fp => ({
+      id: fp.id, name: fp.name, sector: fp.sector, country_code: fp.country_code, province: fp.province,
+      methodology: fp.methodology, outcome: fp.outcome, is_verified: fp.is_verified,
+      dimensions: { team: fp.team_score, risk: fp.risk_score, delivery: fp.delivery_score, governance: fp.governance_score, esg: fp.esg_score, supply_chain: fp.supply_chain_score, complexity: fp.complexity_score },
+      similarity: Math.round(cosine(qv, vectorOf({
+        sector: fp.sector, region: fp.province, methodology: fp.methodology,
+        budget_range: fp.budget_range, duration_months: fp.duration_months, team_size: fp.team_size,
+      })) * 100),
+    })).sort((a, b) => b.similarity - a.similarity).slice(0, 10);
+
+    res.json({
+      project: { id: project.id, name: project.name },
+      method: 'vector recall + cosine re-rank',
+      candidates_scanned: candidates.length,
+      matches,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 router.get('/match', async (req, res) => {
   try {

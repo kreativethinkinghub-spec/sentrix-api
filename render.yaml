@@ -1,26 +1,57 @@
+# Render Blueprint — one-click deploy: creates the database, wires DATABASE_URL,
+# seeds the schema + 100k fingerprint corpus, and starts the API.
+# Deploy: Render → Blueprints → New Blueprint Instance → pick this repo → Apply.
+
+databases:
+  - name: sentrix-db
+    databaseName: sentrix
+    user: sentrix
+    plan: free          # free Postgres to start (expires ~30 days); bump to basic-256mb for production
+
 services:
   - type: web
     name: sentrix-api
     runtime: node
     plan: starter
     buildCommand: npm install
+    # Runs before each deploy goes live. All three are idempotent:
+    # migrate uses IF NOT EXISTS, seed skips if the demo org exists,
+    # seed-fingerprints skips if the table already holds >= 100000 rows.
+    preDeployCommand: node db/migrate.js && node db/seed.js && node db/seed-fingerprints.js 100000
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 4800
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sentrix-db
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: CORS_ORIGIN
         value: https://sentrix-pmo.com,https://sentrix-pmo.pages.dev
+      - key: APP_URL
+        value: https://sentrix-pmo.com
+      - key: SSO_CALLBACK_URL
+        value: https://sentrix-api.onrender.com/api/sso/callback
+      # Paystack — set these in the Render dashboard (Environment). Billing is
+      # inert until PAYSTACK_SECRET_KEY is present. Never commit real keys.
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      # Twilio (WhatsApp/SMS alerts) — inert until set. Never commit real values.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_SMS_FROM
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
     healthCheckPath: /api/health
-    autoDeploy: false
+    autoDeploy: true

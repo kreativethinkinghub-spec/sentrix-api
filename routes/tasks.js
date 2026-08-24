@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
+import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
+const CAN_WRITE = requireRole('admin', 'director', 'pm', 'tech');
 
 router.get('/:projectId', async (req, res) => {
   try {
@@ -17,7 +19,7 @@ router.get('/:projectId', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', CAN_WRITE, async (req, res) => {
   try {
     const { project_id, title, description, status, priority, assigned_to, due_date } = req.body;
     if (!project_id || !title) return res.status(400).json({ error: 'project_id and title are required' });
@@ -42,9 +44,9 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', CAN_WRITE, async (req, res) => {
   try {
-    const allowed = ['title','description','status','priority','assigned_to','due_date','sort_order'];
+    const allowed = ['title','description','status','priority','assigned_to','due_date','sort_order','start_date','duration_days'];
     const sets = [];
     const vals = [];
     let i = 1;
@@ -69,7 +71,7 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', CAN_WRITE, async (req, res) => {
   try {
     await queryOne('DELETE FROM tasks WHERE id = $1', [req.params.id]);
     res.json({ success: true });

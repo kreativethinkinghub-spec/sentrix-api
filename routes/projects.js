@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
+import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
+const CAN_WRITE = requireRole('admin', 'director', 'pm');
 
 router.get('/', async (req, res) => {
   try {
@@ -28,7 +30,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', CAN_WRITE, async (req, res) => {
   try {
     const { name, code, description, methodology, sector, province, budget_total, currency, start_date, target_end_date, programme_name, client_name } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
@@ -56,7 +58,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', CAN_WRITE, async (req, res) => {
   try {
     const allowed = ['name','code','description','status','methodology','sector','province','budget_total','budget_spent','currency','start_date','target_end_date','actual_end_date','programme_name','client_name'];
     const sets = [];
