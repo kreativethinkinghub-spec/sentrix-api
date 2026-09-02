@@ -540,3 +540,42 @@ CREATE OR REPLACE TRIGGER trg_risks_updated BEFORE UPDATE ON risks FOR EACH ROW 
 CREATE OR REPLACE TRIGGER trg_budget_updated BEFORE UPDATE ON budget_items FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- RLS is enforced at the application layer via org_id filtering in queries
+
+-- ═══════════════════════════════════════
+-- 24. COMMUNICATIONS PORTAL (change-mgmt comms plans + notices)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS comms_plans (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  change_id UUID REFERENCES change_requests(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  summary TEXT,
+  audiences JSONB DEFAULT '[]',        -- [{segment, role, interest, message, channel, cadence}]
+  key_messages JSONB DEFAULT '[]',
+  channels TEXT[] DEFAULT '{}',
+  owner_id UUID REFERENCES users(id),
+  approver_role TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approved','published','archived')),
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_comms_project ON comms_plans(project_id);
+CREATE INDEX IF NOT EXISTS idx_comms_change ON comms_plans(change_id);
+
+CREATE TABLE IF NOT EXISTS comms_notices (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  plan_id UUID NOT NULL REFERENCES comms_plans(id) ON DELETE CASCADE,
+  audience TEXT NOT NULL,
+  channel TEXT NOT NULL,             -- portal | email | sms | whatsapp
+  recipient TEXT,
+  message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','failed','read')),
+  sent_at TIMESTAMPTZ,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notice_plan ON comms_notices(plan_id);
+CREATE OR REPLACE TRIGGER trg_comms_plans_updated BEFORE UPDATE ON comms_plans
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();

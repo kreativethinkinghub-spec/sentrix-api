@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
+    "start:prod": "node db/migrate.js && node db/seed.js && node server.js",
     "db:migrate": "node db/migrate.js",
-    "db:seed": "node db/seed.js"
+    "db:seed": "node db/seed.js",
+    "db:fingerprints": "node db/seed-fingerprints.js 100000"
   },
+  "engines": { "node": ">=20" },
   "dependencies": {
     "pg": "^8.13.0",
     "bcryptjs": "^2.4.3",

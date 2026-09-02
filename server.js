@@ -30,6 +30,7 @@ import mfaRoutes from './routes/mfa.js';
 import ssoRoutes from './routes/sso.js';
 import scheduleRoutes from './routes/schedule.js';
 import baselineRoutes from './routes/baseline.js';
+import commsRoutes from './routes/comms.js';
 import { query } from './db/client.js';
 import { authenticate } from './middleware/auth.js';
 
@@ -90,6 +91,7 @@ app.use('/api/alerts', authenticate, alertRoutes);
 app.use('/api/mfa', authenticate, mfaRoutes);
 app.use('/api/schedule', authenticate, scheduleRoutes);
 app.use('/api/baseline', authenticate, baselineRoutes);
+app.use('/api/comms', authenticate, commsRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
