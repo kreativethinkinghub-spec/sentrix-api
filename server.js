@@ -31,6 +31,7 @@ import ssoRoutes from './routes/sso.js';
 import scheduleRoutes from './routes/schedule.js';
 import baselineRoutes from './routes/baseline.js';
 import commsRoutes from './routes/comms.js';
+import subscribeRoutes from './routes/subscribe.js';
 import { query } from './db/client.js';
 import { authenticate } from './middleware/auth.js';
 
@@ -66,6 +67,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/sso', ssoRoutes);   // public start/callback; config routes gate internally
+app.use('/api/subscribe', subscribeRoutes); // public trial + invoice-request capture
 app.use('/api/projects', authenticate, projectRoutes);
 app.use('/api/tasks', authenticate, taskRoutes);
 app.use('/api/risks', authenticate, riskRoutes);

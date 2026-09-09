@@ -579,3 +579,53 @@ CREATE TABLE IF NOT EXISTS comms_notices (
 CREATE INDEX IF NOT EXISTS idx_notice_plan ON comms_notices(plan_id);
 CREATE OR REPLACE TRIGGER trg_comms_plans_updated BEFORE UPDATE ON comms_plans
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ═══════════════════════════════════════
+-- 25. SIGNUP REQUESTS (public trial + invoice-request captures)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  kind TEXT NOT NULL CHECK (kind IN ('trial','invoice')),
+  plan TEXT NOT NULL CHECK (plan IN ('pro','growth','command','sovereign')),
+  billing TEXT NOT NULL DEFAULT 'monthly' CHECK (billing IN ('monthly','annual')),
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacted','converted','rejected','spam')),
+
+  -- Common contact fields
+  email TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  contact_name TEXT,
+  contact_title TEXT,
+  phone TEXT,
+  company TEXT NOT NULL,
+  role TEXT,
+
+  -- Invoice-specific
+  reg_no TEXT,
+  vat_no TEXT,
+  org_type TEXT,
+  billing_address TEXT,
+  users INTEGER,
+  start_date DATE,
+  po_ref TEXT,
+  notes TEXT,
+  cycle TEXT,       -- radio value from the invoice form (monthly|annual)
+
+  -- Trial-specific
+  use_case TEXT,
+
+  -- Provenance / anti-spam
+  source TEXT,
+  ip TEXT,
+  user_agent TEXT,
+  raw JSONB DEFAULT '{}',
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  contacted_at TIMESTAMPTZ,
+  converted_at TIMESTAMPTZ,
+  organisation_id UUID REFERENCES organisations(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signup_email ON signup_requests(email);
+CREATE INDEX IF NOT EXISTS idx_signup_kind_status ON signup_requests(kind, status);
+CREATE INDEX IF NOT EXISTS idx_signup_created ON signup_requests(created_at DESC);
