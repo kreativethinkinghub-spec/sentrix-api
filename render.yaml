@@ -1,23 +1,31 @@
-# Render Blueprint — one-click deploy: creates the database, wires DATABASE_URL,
-# seeds the schema + 100k fingerprint corpus, and starts the API.
+# Render Blueprint — free-tier deployment
 # Deploy: Render → Blueprints → New Blueprint Instance → pick this repo → Apply.
+#
+# Free-tier notes:
+#   - Web service on plan: free (750 h/mo — enough for one always-on service)
+#     sleeps after 15 min idle; use UptimeRobot to ping /api/health every 5 min.
+#   - Postgres on plan: free (expires after 90 days). To go truly free forever,
+#     swap in a Neon free DB: comment out the databases: block, delete the
+#     fromDatabase: entry below, and set DATABASE_URL manually in the dashboard.
+#   - Region: frankfurt (EU) — closest free region. SA residency requires paid.
 
 databases:
   - name: sentrix-db
     databaseName: sentrix
     user: sentrix
-    plan: free          # free Postgres to start (expires ~30 days); bump to basic-256mb for production
+    plan: free
+    region: frankfurt
 
 services:
   - type: web
     name: sentrix-api
     runtime: node
-    plan: starter
+    plan: free                    # free tier — sleeps after 15 min, ~50s cold start
+    region: frankfurt
     buildCommand: npm install
-    # Runs before each deploy goes live. All three are idempotent:
-    # migrate uses IF NOT EXISTS, seed skips if the demo org exists,
-    # seed-fingerprints skips if the table already holds >= 100000 rows.
-    preDeployCommand: node db/migrate.js && node db/seed.js && node db/seed-fingerprints.js 100000
+    # Runs before each deploy goes live. Both are idempotent (IF NOT EXISTS).
+    # Skipping seed-fingerprints on free tier — 100k rows can exceed the build window.
+    preDeployCommand: node db/migrate.js && node db/seed.js
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
@@ -38,13 +46,27 @@ services:
         value: https://sentrix-pmo.com
       - key: SSO_CALLBACK_URL
         value: https://sentrix-api.onrender.com/api/sso/callback
-      # Paystack — set these in the Render dashboard (Environment). Billing is
-      # inert until PAYSTACK_SECRET_KEY is present. Never commit real keys.
+      # SMTP for signup notifications — set in dashboard; mailer no-ops without it
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SIGNUP_NOTIFY_TO
+        value: enterprise@kth-tech.com
+      - key: MAIL_FROM
+        value: SENTRIX <noreply@sentrix-pmo.com>
+      # Paystack — inert until set
       - key: PAYSTACK_SECRET_KEY
         sync: false
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
-      # Twilio (WhatsApp/SMS alerts) — inert until set. Never commit real values.
+      # Twilio — inert until set
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
