@@ -1,0 +1,37 @@
+# SENTRIX API — Fly.io deployment
+# Deploy: `flyctl deploy` (from this directory, after `flyctl launch --no-deploy` on first run)
+# Region: JNB (Johannesburg) — genuine SA data residency
+# Docs: https://fly.io/docs/reference/configuration/
+
+app = "sentrix-api"
+primary_region = "jnb"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4800"
+  # CORS_ORIGIN, DATABASE_URL, JWT_SECRET, SMTP_* are secrets — set via `flyctl secrets set`
+
+[http_service]
+  internal_port = 4800
+  force_https = true
+  auto_stop_machines = "off"     # keep hot — free-tier auto-stop causes cold starts on prospect signups
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "20s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512               # bumps easy via `flyctl scale memory 1024`
