@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS organisations (
   industry TEXT,
   size TEXT CHECK (size IN ('1-10','11-50','51-200','201-1000','1000+')),
   country_code CHAR(2) DEFAULT 'ZA',
-  tier TEXT NOT NULL DEFAULT 'professional' CHECK (tier IN ('professional','growth','command','sovereign')),
+  tier TEXT NOT NULL DEFAULT 'professional' CHECK (tier IN ('solo','professional','growth','command','sovereign')),
   billing_cycle TEXT DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly','annual')),
   max_users INT NOT NULL DEFAULT 5,
   max_projects INT NOT NULL DEFAULT 10,
@@ -587,7 +587,7 @@ CREATE OR REPLACE TRIGGER trg_comms_plans_updated BEFORE UPDATE ON comms_plans
 CREATE TABLE IF NOT EXISTS signup_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   kind TEXT NOT NULL CHECK (kind IN ('trial','invoice')),
-  plan TEXT NOT NULL CHECK (plan IN ('pro','growth','command','sovereign')),
+  plan TEXT NOT NULL CHECK (plan IN ('solo','pro','growth','command','sovereign')),
   billing TEXT NOT NULL DEFAULT 'monthly' CHECK (billing IN ('monthly','annual')),
   status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacted','converted','rejected','spam')),
 
@@ -817,3 +817,21 @@ CREATE TABLE IF NOT EXISTS contract_variations (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_variations_contract ON contract_variations(contract_id);
+
+-- ═══════════════════════════════════════
+-- 32. TIER EXPANSION — 'solo' added post-launch
+-- ═══════════════════════════════════════
+-- Existing DBs picked up the CHECK constraint at CREATE time without 'solo'.
+-- These DROP+ADD blocks are idempotent (fail silently if the constraint is
+-- already the target shape).
+DO $$ BEGIN
+  ALTER TABLE organisations DROP CONSTRAINT IF EXISTS organisations_tier_check;
+  ALTER TABLE organisations ADD CONSTRAINT organisations_tier_check
+    CHECK (tier IN ('solo','professional','growth','command','sovereign'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE signup_requests DROP CONSTRAINT IF EXISTS signup_requests_plan_check;
+  ALTER TABLE signup_requests ADD CONSTRAINT signup_requests_plan_check
+    CHECK (plan IN ('solo','pro','growth','command','sovereign'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;

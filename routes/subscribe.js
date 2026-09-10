@@ -4,8 +4,10 @@ import { notifySignup } from '../db/mailer.js';
 
 const router = Router();
 
-const VALID_PLANS = new Set(['pro', 'growth', 'command', 'sovereign']);
-const VALID_BILLING = new Set(['monthly', 'annual']);
+const VALID_PLANS = new Set(['solo', 'pro', 'growth', 'command', 'sovereign']);
+// SENTRIX is sold as annual-only. Anything else is coerced to 'annual'
+// server-side so old links / stale forms still POST successfully.
+const VALID_BILLING = new Set(['annual']);
 
 function clean(s, max = 500) {
   if (s == null) return null;
@@ -36,17 +38,17 @@ router.post('/trial', async (req, res, next) => {
   try {
     const b = req.body || {};
     const plan = clean(b.plan, 20)?.toLowerCase() || 'pro';
-    const billing = clean(b.billing, 10)?.toLowerCase() || 'monthly';
+    const billing = 'annual'; // annual-only — no monthly option
     const email = clean(b.email, 254)?.toLowerCase();
     const company = clean(b.company, 200);
 
     if (!VALID_PLANS.has(plan)) return res.status(400).json({ error: 'invalid plan' });
     if (plan === 'command' || plan === 'sovereign') return res.status(400).json({ error: 'plan requires invoice — use /api/subscribe/invoice' });
-    if (!VALID_BILLING.has(billing)) return res.status(400).json({ error: 'invalid billing' });
     if (!validEmail(email)) return res.status(400).json({ error: 'valid email required' });
     if (!company) return res.status(400).json({ error: 'company required' });
     if (b.terms !== 'on' && b.terms !== true && b.terms !== 'true') return res.status(400).json({ error: 'terms must be accepted' });
 
+    // 'trial' is kept as the kind for schema compatibility; means "self-serve subscription intent"
     const row = await queryOne(
       `INSERT INTO signup_requests
          (kind, plan, billing, email, first_name, last_name, phone, company, role, use_case, source, ip, user_agent, raw)
@@ -70,7 +72,7 @@ router.post('/trial', async (req, res, next) => {
     return res.status(201).json({
       ok: true,
       id: row.id,
-      message: 'Trial request received. Our team will email a login link within 1 business day.',
+      message: 'Subscription request received. Our team will send a payment link within 1 business day (Paystack integration pending).',
     });
   } catch (e) {
     // Duplicate rapid-fire submits: swallow into a friendly 201 rather than 500
@@ -87,7 +89,7 @@ router.post('/invoice', async (req, res, next) => {
   try {
     const b = req.body || {};
     const plan = clean(b.plan, 20)?.toLowerCase() || 'command';
-    const billing = clean(b.billing, 10)?.toLowerCase() || 'monthly';
+    const billing = 'annual'; // annual-only — no monthly option
     const email = clean(b.email, 254)?.toLowerCase();
     const company = clean(b.company, 200);
     const orgType = clean(b.orgType, 80);
