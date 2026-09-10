@@ -32,6 +32,13 @@ import scheduleRoutes from './routes/schedule.js';
 import baselineRoutes from './routes/baseline.js';
 import commsRoutes from './routes/comms.js';
 import subscribeRoutes from './routes/subscribe.js';
+import scenarioRoutes from './routes/scenarios.js';
+import esgRoutes from './routes/esg.js';
+import workforceRoutes from './routes/workforce.js';
+import meetingRoutes from './routes/meetings.js';
+import procurementRoutes from './routes/procurement.js';
+import variationRoutes from './routes/variations.js';
+import streamRoutes from './routes/stream.js';
 import { query } from './db/client.js';
 import { authenticate } from './middleware/auth.js';
 
@@ -94,6 +101,13 @@ app.use('/api/mfa', authenticate, mfaRoutes);
 app.use('/api/schedule', authenticate, scheduleRoutes);
 app.use('/api/baseline', authenticate, baselineRoutes);
 app.use('/api/comms', authenticate, commsRoutes);
+app.use('/api/scenarios', authenticate, scenarioRoutes);
+app.use('/api/esg', authenticate, esgRoutes);
+app.use('/api/workforce', authenticate, workforceRoutes);
+app.use('/api/meetings', authenticate, meetingRoutes);
+app.use('/api/procurement', authenticate, procurementRoutes);
+app.use('/api/variations', authenticate, variationRoutes);
+app.use('/api/stream', authenticate, streamRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

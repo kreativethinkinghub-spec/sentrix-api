@@ -629,3 +629,191 @@ CREATE TABLE IF NOT EXISTS signup_requests (
 CREATE INDEX IF NOT EXISTS idx_signup_email ON signup_requests(email);
 CREATE INDEX IF NOT EXISTS idx_signup_kind_status ON signup_requests(kind, status);
 CREATE INDEX IF NOT EXISTS idx_signup_created ON signup_requests(created_at DESC);
+
+-- ═══════════════════════════════════════
+-- 26. DIGITAL TWIN SCENARIOS (project what-if modelling)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS scenarios (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  base_budget NUMERIC(18,2),
+  base_duration_days INTEGER,
+  base_team_size INTEGER,
+  scenario_budget NUMERIC(18,2),
+  scenario_duration_days INTEGER,
+  scenario_team_size INTEGER,
+  budget_delta NUMERIC(18,2) GENERATED ALWAYS AS (scenario_budget - base_budget) STORED,
+  duration_delta INTEGER GENERATED ALWAYS AS (scenario_duration_days - base_duration_days) STORED,
+  risk_adjustment JSONB DEFAULT '{}',        -- {factor:multiplier}
+  outcome JSONB DEFAULT '{}',                -- computed on save: {new_end_date, new_burn_rate, risk_score}
+  notes TEXT,
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_scenarios_project ON scenarios(project_id);
+CREATE OR REPLACE TRIGGER trg_scenarios_updated BEFORE UPDATE ON scenarios
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ═══════════════════════════════════════
+-- 27. ESG & CARBON METRICS (GRI/TCFD-aligned entries)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS esg_entries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('environmental','social','governance')),
+  metric TEXT NOT NULL,       -- e.g. 'carbon_kg_co2e', 'water_m3', 'energy_kwh', 'community_hours', 'local_procurement_pct', 'bbbee_spend', 'incidents_lti'
+  value NUMERIC(18,4) NOT NULL,
+  unit TEXT NOT NULL,
+  source TEXT,                -- e.g. 'Eskom invoice', 'contractor report', 'community liaison log'
+  gri_ref TEXT,               -- e.g. 'GRI 305-1' (scope 1 emissions)
+  tcfd_ref TEXT,              -- e.g. 'Metrics & Targets a)'
+  verified BOOLEAN DEFAULT FALSE,
+  verified_by UUID REFERENCES users(id),
+  verified_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_esg_project ON esg_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_esg_category_metric ON esg_entries(category, metric);
+CREATE INDEX IF NOT EXISTS idx_esg_period ON esg_entries(period_end DESC);
+
+-- ═══════════════════════════════════════
+-- 28. WORKFORCE INTELLIGENCE (utilisation + capability)
+-- ═══════════════════════════════════════
+-- Analytics compute from project_members + tasks + timesheets. This table
+-- captures the raw signal for utilisation / effort tracking.
+
+CREATE TABLE IF NOT EXISTS timesheet_entries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+  entry_date DATE NOT NULL,
+  hours NUMERIC(5,2) NOT NULL CHECK (hours >= 0 AND hours <= 24),
+  activity TEXT,
+  billable BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ts_user_date ON timesheet_entries(user_id, entry_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ts_project_date ON timesheet_entries(project_id, entry_date DESC);
+
+CREATE TABLE IF NOT EXISTS user_capabilities (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  capability TEXT NOT NULL,   -- e.g. 'SCADA', 'M&E', 'PostgreSQL', 'PMBoK', 'CIDB-6', 'PPE-approved'
+  proficiency INTEGER NOT NULL CHECK (proficiency BETWEEN 1 AND 5),
+  certified BOOLEAN DEFAULT FALSE,
+  cert_expiry DATE,
+  PRIMARY KEY (user_id, capability)
+);
+CREATE INDEX IF NOT EXISTS idx_caps_capability ON user_capabilities(capability);
+
+-- ═══════════════════════════════════════
+-- 29. MEETING INTELLIGENCE (agenda, minutes, action items)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS meetings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  meeting_type TEXT NOT NULL DEFAULT 'steerco' CHECK (meeting_type IN ('steerco','standup','sprint_review','client','contractor','risk_review','audit','other')),
+  scheduled_at TIMESTAMPTZ NOT NULL,
+  duration_min INTEGER DEFAULT 60,
+  location TEXT,
+  agenda TEXT,
+  minutes TEXT,
+  summary TEXT,               -- computed summary from minutes (extractive, deterministic)
+  attendees JSONB DEFAULT '[]',  -- [{user_id?, name, role, present}]
+  status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','in_progress','complete','cancelled')),
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_meetings_project ON meetings(project_id);
+CREATE INDEX IF NOT EXISTS idx_meetings_scheduled ON meetings(scheduled_at DESC);
+CREATE OR REPLACE TRIGGER trg_meetings_updated BEFORE UPDATE ON meetings
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS meeting_actions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  owner_name TEXT,
+  due_date DATE,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','in_progress','done','cancelled')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_actions_meeting ON meeting_actions(meeting_id);
+CREATE INDEX IF NOT EXISTS idx_actions_owner ON meeting_actions(owner_id) WHERE status != 'done';
+
+-- ═══════════════════════════════════════
+-- 30. SUPPLY CHAIN (procurement pipeline + supplier risk)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS procurement_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  category TEXT,
+  estimated_value NUMERIC(18,2),
+  awarded_value NUMERIC(18,2),
+  contractor_id UUID REFERENCES contractors(id) ON DELETE SET NULL,
+  stage TEXT NOT NULL DEFAULT 'planned' CHECK (stage IN ('planned','tender','evaluation','awarded','contracted','delivered','closed')),
+  planned_award_date DATE,
+  actual_award_date DATE,
+  bbbee_spend_pct NUMERIC(5,2),
+  local_content_pct NUMERIC(5,2),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_procurement_project ON procurement_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_procurement_stage ON procurement_items(stage);
+CREATE OR REPLACE TRIGGER trg_procurement_updated BEFORE UPDATE ON procurement_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ═══════════════════════════════════════
+-- 31. CONTRACT VARIANCE (committed-vs-actual per contract)
+-- ═══════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS contracts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  contractor_id UUID REFERENCES contractors(id) ON DELETE SET NULL,
+  contract_ref TEXT NOT NULL,
+  title TEXT NOT NULL,
+  original_value NUMERIC(18,2) NOT NULL,
+  original_end_date DATE,
+  current_value NUMERIC(18,2),
+  current_end_date DATE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','active','on_hold','closed','terminated')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_contracts_project ON contracts(project_id);
+CREATE OR REPLACE TRIGGER trg_contracts_updated BEFORE UPDATE ON contracts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS contract_variations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  contract_id UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  change_request_id UUID REFERENCES change_requests(id) ON DELETE SET NULL,
+  variation_ref TEXT,
+  description TEXT NOT NULL,
+  cost_impact NUMERIC(18,2) NOT NULL DEFAULT 0,
+  time_impact_days INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','approved','rejected','implemented')),
+  approved_by UUID REFERENCES users(id),
+  approved_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_variations_contract ON contract_variations(contract_id);
