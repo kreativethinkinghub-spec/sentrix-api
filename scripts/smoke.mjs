@@ -412,6 +412,116 @@ async function main() {
   record('GET /api/audit?project_id', audit.status === 200 && Array.isArray(audit.json),
     `${audit.status}, ${Array.isArray(audit.json) ? audit.json.length : '?'} entries`);
 
+  // ── EXTENDED COVERAGE — exercise routes that use ALTER-added columns
+  console.log('\n🔬 Extended coverage — schema-heavy routes');
+
+  // Baseline (uses tasks.duration_days via ALTER)
+  const capBaseline = await http('POST', `/api/baseline/${projectId}`, { token, body: { name: 'Baseline v1', type: 'full' } });
+  record('POST /api/baseline/:project captures snapshot', [200, 201].includes(capBaseline.status),
+    `${capBaseline.status} ${capBaseline.json?.id || JSON.stringify(capBaseline.json).slice(0, 120)}`);
+
+  const listBaselines = await http('GET', `/api/baseline/${projectId}`, { token });
+  record('GET /api/baseline/:project', listBaselines.status === 200 && Array.isArray(listBaselines.json),
+    `${listBaselines.status}, ${listBaselines.json?.length ?? 0} baseline(s)`);
+
+  // Change request (uses change_requests.contractor_id + .required_approver via ALTER)
+  // Cost 500k > pm threshold (100k default) but <= director threshold (1m default) → routes to director
+  const change = await http('POST', '/api/change', {
+    token,
+    body: {
+      project_id: projectId,
+      title: 'Additional 3 treatment works — Phase 2 scope expansion',
+      type: 'scope', cost_impact: 500000, schedule_impact_days: 21, priority: 'high',
+      description: 'Provincial requests for 3 additional sites',
+      justification: 'DWS requested via MinMEC resolution',
+    },
+  });
+  const requiredApproverOk = change.json?.required_approver === 'director';
+  record('POST /api/change routes to director (R100k < cost ≤ R1m)', [200, 201].includes(change.status) && requiredApproverOk,
+    `${change.status} required=${change.json?.required_approver} ref=${change.json?.reference}`);
+
+  const listChanges = await http('GET', `/api/change/${projectId}`, { token });
+  record('GET /api/change/:project + scope-creep rollup', listChanges.status === 200 && Array.isArray(listChanges.json?.changes),
+    `${listChanges.status}, ${listChanges.json?.changes?.length ?? 0} change(s), creep_pct=${listChanges.json?.summary?.scope_creep_pct}`);
+
+  // MFA (uses users.mfa_enabled / mfa_secret via ALTER)
+  const mfaStatus = await http('GET', '/api/mfa', { token });
+  record('GET /api/mfa (status)', mfaStatus.status === 200 && 'enabled' in mfaStatus.json,
+    `${mfaStatus.status} enabled=${mfaStatus.json?.enabled}`);
+
+  const mfaEnroll = await http('POST', '/api/mfa/enroll', { token, body: {} });
+  record('POST /api/mfa/enroll', mfaEnroll.status === 200 && mfaEnroll.json?.secret && mfaEnroll.json?.otpauth_url,
+    `${mfaEnroll.status} secret len=${mfaEnroll.json?.secret?.length}`);
+
+  // Alerts (uses users.phone + users.alerts_optin via ALTER)
+  const alertMe = await http('POST', '/api/alerts/me', { token, body: { phone: '+27820001234', alerts_optin: true } });
+  record('POST /api/alerts/me (phone+optin)', alertMe.status === 200 && alertMe.json?.phone === '+27820001234',
+    `${alertMe.status} phone=${alertMe.json?.phone}, optin=${alertMe.json?.alerts_optin}`);
+
+  const alertList = await http('GET', '/api/alerts', { token });
+  record('GET /api/alerts (recipient count)', alertList.status === 200 && typeof alertList.json?.recipients === 'number',
+    `${alertList.status} configured=${alertList.json?.configured}, recipients=${alertList.json?.recipients}`);
+
+  // Contractors
+  const contractor = await http('POST', '/api/contractors', {
+    token,
+    body: { name: 'Acme Civils (Pty) Ltd', sector: 'civil-works', registration_no: '2020/123456/07', cidb_grade: '7CE', bbbee_level: '2', contact_email: 'ops@acme.example' },
+  });
+  const contractorId = contractor.json?.id;
+  record('POST /api/contractors', [200, 201].includes(contractor.status) && contractorId,
+    `${contractor.status} ${contractorId || JSON.stringify(contractor.json).slice(0, 120)}`);
+
+  const listContractors = await http('GET', '/api/contractors', { token });
+  record('GET /api/contractors', listContractors.status === 200 && Array.isArray(listContractors.json),
+    `${listContractors.status}, ${listContractors.json?.length ?? 0} contractor(s)`);
+
+  // Contractor rating (contractor_ratings uses INT 0-100) — route is /:id/rate
+  const rating = await http('POST', `/api/contractors/${contractorId}/rate`, {
+    token,
+    body: { project_id: projectId, delivery_score: 78, quality_score: 82, safety_score: 90, cost_score: 65, notes: 'On budget, delivery slip 8 days' },
+  });
+  record('POST /api/contractors/:id/rate', [200, 201].includes(rating.status),
+    `${rating.status} ${rating.json?.id || JSON.stringify(rating.json).slice(0, 120)}`);
+
+  // Budget item
+  const budgetItem = await http('POST', '/api/budget', {
+    token,
+    body: { project_id: projectId, category: 'Personnel', description: 'Q4 salaries', planned_amount: 2400000, actual_amount: 2380000, currency: 'ZAR', period: '2026-Q4' },
+  });
+  record('POST /api/budget', [200, 201].includes(budgetItem.status),
+    `${budgetItem.status} ${budgetItem.json?.id || JSON.stringify(budgetItem.json).slice(0, 120)}`);
+
+  // GET returns { items, summary } — not a bare array
+  const listBudget = await http('GET', `/api/budget/${projectId}`, { token });
+  const budgetOk = listBudget.status === 200 && Array.isArray(listBudget.json?.items) && listBudget.json.items.length > 0;
+  record('GET /api/budget/:project items+summary', budgetOk,
+    `${listBudget.status}, ${listBudget.json?.items?.length ?? 0} line(s), planned=${listBudget.json?.summary?.planned}`);
+
+  // Cost EVM report (route is /:projectId/evm)
+  const cost = await http('GET', `/api/cost/${projectId}/evm`, { token });
+  record('GET /api/cost/:project/evm', cost.status === 200 && cost.json,
+    `${cost.status} ${cost.json?.CPI != null ? 'CPI=' + cost.json.CPI : Object.keys(cost.json || {}).slice(0, 6).join(',')}`);
+
+  // Reports — board pack (deterministic narrative from live data)
+  const board = await http('GET', `/api/reports/${projectId}/board-pack`, { token });
+  record('GET /api/reports/:project/board-pack', board.status === 200 && board.json?.narrative,
+    `${board.status} rag=${board.json?.rag_status} narr_len=${board.json?.narrative?.length}`);
+
+  // Users list (org roster)
+  const users = await http('GET', '/api/users', { token });
+  record('GET /api/users', users.status === 200 && Array.isArray(users.json),
+    `${users.status}, ${users.json?.length ?? 0} user(s)`);
+
+  // Notifications — response is { notifications, unread } not a bare array
+  const notif = await http('GET', '/api/notifications', { token });
+  record('GET /api/notifications', notif.status === 200 && Array.isArray(notif.json?.notifications),
+    `${notif.status}, ${notif.json?.notifications?.length ?? 0} notif(s), unread=${notif.json?.unread}`);
+
+  // Portfolio (aggregates across all org projects)
+  const portfolio = await http('GET', '/api/portfolio', { token });
+  record('GET /api/portfolio', portfolio.status === 200,
+    `${portfolio.status} ${Object.keys(portfolio.json || {}).slice(0, 5).join(',')}`);
+
   // ── SUMMARY ──────────────────────────────────────────────────────
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
