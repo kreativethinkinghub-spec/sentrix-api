@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
 import { requireRole } from '../middleware/auth.js';
+import { logMeetingAttendance } from '../db/autotrack.js';
 
 const router = Router();
 const CAN_MANAGE = requireRole('admin', 'director', 'pm');
@@ -104,7 +105,11 @@ router.post('/:id/close', CAN_MANAGE, async (req, res) => {
         );
       }
     }
-    res.json(row);
+
+    // Auto-timesheet: log the meeting duration against every present attendee
+    // with a resolvable user_id. Non-blocking — timesheet errors don't fail the close.
+    const autoTrack = await logMeetingAttendance(row).catch((e) => ({ error: e.message }));
+    res.json({ ...row, autoTrack });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

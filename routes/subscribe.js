@@ -4,7 +4,9 @@ import { notifySignup } from '../db/mailer.js';
 
 const router = Router();
 
-const VALID_PLANS = new Set(['solo', 'pro', 'growth', 'command', 'sovereign']);
+const VALID_PLANS = new Set(['solo', 'practice', 'boutique', 'pro', 'growth', 'command', 'sovereign']);
+const SELF_SERVE = new Set(['solo', 'practice', 'boutique', 'growth']); // credit-card path
+const INVOICE_ONLY = new Set(['pro', 'command', 'sovereign']); // bespoke / procurement
 // SENTRIX is sold as annual-only. Anything else is coerced to 'annual'
 // server-side so old links / stale forms still POST successfully.
 const VALID_BILLING = new Set(['annual']);
@@ -43,7 +45,7 @@ router.post('/trial', async (req, res, next) => {
     const company = clean(b.company, 200);
 
     if (!VALID_PLANS.has(plan)) return res.status(400).json({ error: 'invalid plan' });
-    if (plan === 'command' || plan === 'sovereign') return res.status(400).json({ error: 'plan requires invoice — use /api/subscribe/invoice' });
+    if (INVOICE_ONLY.has(plan)) return res.status(400).json({ error: 'plan requires invoice — use /api/subscribe/invoice' });
     if (!validEmail(email)) return res.status(400).json({ error: 'valid email required' });
     if (!company) return res.status(400).json({ error: 'company required' });
     if (b.terms !== 'on' && b.terms !== true && b.terms !== 'true') return res.status(400).json({ error: 'terms must be accepted' });

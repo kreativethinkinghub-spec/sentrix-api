@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
 import { requireRole } from '../middleware/auth.js';
+import { logTaskActivity } from '../db/autotrack.js';
 
 const router = Router();
 const CAN_WRITE = requireRole('admin', 'director', 'pm', 'tech');
@@ -62,10 +63,23 @@ router.patch('/:id', CAN_WRITE, async (req, res) => {
     }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
+    // Snapshot old status before the update so autotrack knows if it's a real transition
+    const prev = await queryOne('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+    if (!prev) return res.status(404).json({ error: 'Task not found' });
+
     vals.push(req.params.id);
     const row = await queryOne(`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals);
     if (!row) return res.status(404).json({ error: 'Task not found' });
-    res.json(row);
+
+    // Auto-timesheet on genuine status promotion (in-progress or done)
+    let autoTrack = { logged: false };
+    if (req.body.status && req.body.status !== prev.status) {
+      autoTrack = await logTaskActivity({
+        task: row, actor_user_id: req.user.id,
+        new_status: req.body.status, old_status: prev.status,
+      }).catch((e) => ({ error: e.message }));
+    }
+    res.json({ ...row, autoTrack });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

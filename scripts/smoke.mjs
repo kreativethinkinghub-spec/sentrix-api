@@ -372,7 +372,7 @@ async function main() {
   console.log('\n💳 Public subscribe endpoints');
   const trial = await http('POST', '/api/subscribe/trial', {
     body: {
-      plan: 'pro', billing: 'monthly',
+      plan: 'solo',
       email: `trial_${Date.now()}@example.com`,
       firstName: 'Trial', lastName: 'User', company: 'Trial Co', role: 'PMO Director',
       use: 'evaluating for a R300m road project', terms: true,
@@ -521,6 +521,74 @@ async function main() {
   const portfolio = await http('GET', '/api/portfolio', { token });
   record('GET /api/portfolio', portfolio.status === 200,
     `${portfolio.status} ${Object.keys(portfolio.json || {}).slice(0, 5).join(',')}`);
+
+  // ── AUTO-TIMESHEET COVERAGE ──────────────────────────────────────
+  console.log('\n⏱  Auto-tracking timesheet');
+
+  // Heartbeat: ping twice, expect one coalesced row
+  const hb1 = await http('POST', '/api/workforce/track', { token, body: { project_id: projectId, minutes: 5 } });
+  const hb2 = await http('POST', '/api/workforce/track', { token, body: { project_id: projectId, minutes: 5 } });
+  record('POST /api/workforce/track coalesces heartbeats', hb1.status === 200 && hb2.status === 200 && hb2.json?.coalesced === true,
+    `hb1=${hb1.status} coalesced=${hb1.json?.coalesced}, hb2=${hb2.status} coalesced=${hb2.json?.coalesced}`);
+
+  // Task status change → auto-timesheet on that task
+  const t1 = await http('POST', '/api/tasks', {
+    token,
+    body: { project_id: projectId, title: 'Autotrack smoke — draft SCADA spec', status: 'todo', priority: 'high', assigned_to: login.json.user?.id },
+  });
+  const taskId = t1.json?.id;
+  const t2 = await http('PATCH', `/api/tasks/${taskId}`, { token, body: { status: 'in-progress' } });
+  record('PATCH /api/tasks status → auto-timesheet', t2.status === 200 && t2.json?.autoTrack?.logged === true,
+    `${t2.status} logged=${t2.json?.autoTrack?.logged} hours=${t2.json?.autoTrack?.hours}`);
+
+  // Meeting close with an attendee that has a user_id → auto-timesheet for that attendee
+  const m2 = await http('POST', '/api/meetings', {
+    token,
+    body: {
+      project_id: projectId, title: 'Autotrack smoke — daily standup', meeting_type: 'standup',
+      scheduled_at: '2026-09-15T10:00:00Z', duration_min: 30,
+      attendees: [{ user_id: login.json.user?.id, name: 'Smoke Test', role: 'PM', present: true }],
+    },
+  });
+  const m2Close = await http('POST', `/api/meetings/${m2.json?.id}/close`, {
+    token, body: { minutes: 'Decision: proceed with revised sprint plan.' },
+  });
+  record('POST /api/meetings/:id/close → auto-timesheet attendees', m2Close.status === 200 && m2Close.json?.autoTrack?.logged === 1,
+    `${m2Close.status} logged=${m2Close.json?.autoTrack?.logged} hours_each=${m2Close.json?.autoTrack?.hours_each}`);
+
+  // Auto-track summary: should show manual + task + heartbeat + meeting sources
+  const autoSum = await http('GET', '/api/workforce/auto-summary?from=2026-01-01&to=2026-12-31', { token });
+  const sources = new Set((autoSum.json?.by_source || []).map((r) => r.source));
+  const gotAllSources = ['heartbeat', 'task', 'meeting', 'manual'].every((s) => sources.has(s));
+  record('GET /api/workforce/auto-summary shows all sources', autoSum.status === 200 && gotAllSources,
+    `${autoSum.status} sources=${[...sources].join(',')} auto_pct=${autoSum.json?.auto_pct}%`);
+
+  // ── NEW TIER COVERAGE — Practice, Boutique, and invoice-only Pro
+  console.log('\n💰 New pricing tiers');
+  const practice = await http('POST', '/api/subscribe/trial', {
+    body: { plan: 'practice', email: `pract_${Date.now()}@example.com`, firstName: 'P', lastName: 'M', company: 'Freelance PM Co', role: 'PM', terms: true },
+  });
+  record('POST /api/subscribe/trial plan=practice', practice.status === 201, `${practice.status}`);
+
+  const boutique = await http('POST', '/api/subscribe/trial', {
+    body: { plan: 'boutique', email: `bout_${Date.now()}@example.com`, firstName: 'B', lastName: 'T', company: 'Boutique Consulting', role: 'Managing Director', terms: true },
+  });
+  record('POST /api/subscribe/trial plan=boutique', boutique.status === 201, `${boutique.status}`);
+
+  const proInvoice = await http('POST', '/api/subscribe/invoice', {
+    body: {
+      plan: 'pro', email: `pro_${Date.now()}@example.com`, company: 'Mid-Market Firm',
+      orgType: 'Private company (Pty) Ltd', contactName: 'Finance Lead', contactTitle: 'CFO',
+      billingAddr: '10 Sandton Dr, JHB', terms: true,
+    },
+  });
+  record('POST /api/subscribe/invoice plan=pro (bespoke)', proInvoice.status === 201, `${proInvoice.status}`);
+
+  const proAsTrial = await http('POST', '/api/subscribe/trial', {
+    body: { plan: 'pro', email: 'reject@example.com', company: 'C', firstName:'X', lastName:'Y', terms: true },
+  });
+  record('POST /api/subscribe/trial plan=pro → 400 (invoice-only)', proAsTrial.status === 400 && /invoice/i.test(proAsTrial.json?.error || ''),
+    `${proAsTrial.status} ${proAsTrial.json?.error}`);
 
   // ── SUMMARY ──────────────────────────────────────────────────────
   const passed = results.filter((r) => r.ok).length;

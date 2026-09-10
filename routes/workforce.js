@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, queryOne } from '../db/client.js';
 import { requireRole } from '../middleware/auth.js';
+import { logHeartbeat } from '../db/autotrack.js';
 
 const router = Router();
 const CAN_LOG = requireRole('admin', 'director', 'pm', 'tech', 'contractor');
@@ -10,7 +11,7 @@ const CAN_LOG = requireRole('admin', 'director', 'pm', 'tech', 'contractor');
    from real project_members + tasks + timesheet_entries + user_capabilities.
    No ML — this is aggregated real data plus deterministic scoring. */
 
-// Log a timesheet entry
+// Log a manual timesheet entry
 router.post('/timesheet', CAN_LOG, async (req, res) => {
   try {
     const { project_id, task_id, entry_date, hours, activity, billable } = req.body;
@@ -18,11 +19,54 @@ router.post('/timesheet', CAN_LOG, async (req, res) => {
       return res.status(400).json({ error: 'project_id, entry_date, hours required' });
     }
     const row = await queryOne(
-      `INSERT INTO timesheet_entries (user_id, project_id, task_id, entry_date, hours, activity, billable)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,true)) RETURNING *`,
+      `INSERT INTO timesheet_entries (user_id, project_id, task_id, entry_date, hours, activity, billable, source)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,true),'manual') RETURNING *`,
       [req.user.id, project_id, task_id || null, entry_date, hours, activity || null, billable]
     );
     res.status(201).json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * Heartbeat: called by the front-end every ~5 min while a user has a project
+ * dashboard open. Coalesced into ONE row per (user, project, day) with a
+ * running hours total — no matter how many pings, at most one row per day.
+ * Body: { project_id, minutes? } (default 5)
+ */
+router.post('/track', async (req, res) => {
+  try {
+    const { project_id, minutes } = req.body || {};
+    if (!project_id) return res.status(400).json({ error: 'project_id required' });
+    const result = await logHeartbeat({ user_id: req.user.id, project_id, minutes });
+    res.status(200).json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * Auto-track summary — a breakdown of a user's logged hours by source
+ * (manual, meeting, task, heartbeat) over a date window. Answers
+ * "how much of my time was captured automatically vs typed in?".
+ */
+router.get('/auto-summary', async (req, res) => {
+  try {
+    const from = req.query.from || new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+    const to = req.query.to || new Date().toISOString().slice(0, 10);
+    const userId = req.query.user_id || req.user.id;
+    const rows = await query(
+      `SELECT source, COUNT(*)::int AS entries, ROUND(SUM(hours)::numeric, 2) AS hours,
+              COUNT(DISTINCT project_id)::int AS projects
+       FROM timesheet_entries
+       WHERE user_id = $1 AND entry_date BETWEEN $2 AND $3
+       GROUP BY source
+       ORDER BY hours DESC NULLS LAST`,
+      [userId, from, to]
+    );
+    const total = rows.reduce((s, r) => s + Number(r.hours || 0), 0);
+    const enriched = rows.map((r) => ({ ...r, hours: Number(r.hours), pct: total > 0 ? Math.round((Number(r.hours) / total) * 100) : 0 }));
+    const autoPct = enriched
+      .filter((r) => r.source !== 'manual')
+      .reduce((s, r) => s + r.pct, 0);
+    res.json({ from, to, user_id: userId, total_hours: total, auto_pct: autoPct, by_source: enriched });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

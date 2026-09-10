@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS organisations (
   industry TEXT,
   size TEXT CHECK (size IN ('1-10','11-50','51-200','201-1000','1000+')),
   country_code CHAR(2) DEFAULT 'ZA',
-  tier TEXT NOT NULL DEFAULT 'professional' CHECK (tier IN ('solo','professional','growth','command','sovereign')),
+  tier TEXT NOT NULL DEFAULT 'professional' CHECK (tier IN ('solo','practice','boutique','professional','growth','command','sovereign')),
   billing_cycle TEXT DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly','annual')),
   max_users INT NOT NULL DEFAULT 5,
   max_projects INT NOT NULL DEFAULT 10,
@@ -587,7 +587,7 @@ CREATE OR REPLACE TRIGGER trg_comms_plans_updated BEFORE UPDATE ON comms_plans
 CREATE TABLE IF NOT EXISTS signup_requests (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   kind TEXT NOT NULL CHECK (kind IN ('trial','invoice')),
-  plan TEXT NOT NULL CHECK (plan IN ('solo','pro','growth','command','sovereign')),
+  plan TEXT NOT NULL CHECK (plan IN ('solo','practice','boutique','pro','growth','command','sovereign')),
   billing TEXT NOT NULL DEFAULT 'monthly' CHECK (billing IN ('monthly','annual')),
   status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacted','converted','rejected','spam')),
 
@@ -699,8 +699,18 @@ CREATE TABLE IF NOT EXISTS timesheet_entries (
   hours NUMERIC(5,2) NOT NULL CHECK (hours >= 0 AND hours <= 24),
   activity TEXT,
   billable BOOLEAN DEFAULT TRUE,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','meeting','task','heartbeat','import')),
+  source_ref UUID,           -- meeting_id / task_id it was derived from
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Idempotent add for existing DBs
+DO $$ BEGIN
+  ALTER TABLE timesheet_entries ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
+  ALTER TABLE timesheet_entries ADD COLUMN IF NOT EXISTS source_ref UUID;
+  ALTER TABLE timesheet_entries DROP CONSTRAINT IF EXISTS timesheet_entries_source_check;
+  ALTER TABLE timesheet_entries ADD CONSTRAINT timesheet_entries_source_check
+    CHECK (source IN ('manual','meeting','task','heartbeat','import'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_ts_user_date ON timesheet_entries(user_id, entry_date DESC);
 CREATE INDEX IF NOT EXISTS idx_ts_project_date ON timesheet_entries(project_id, entry_date DESC);
 
@@ -827,11 +837,11 @@ CREATE INDEX IF NOT EXISTS idx_variations_contract ON contract_variations(contra
 DO $$ BEGIN
   ALTER TABLE organisations DROP CONSTRAINT IF EXISTS organisations_tier_check;
   ALTER TABLE organisations ADD CONSTRAINT organisations_tier_check
-    CHECK (tier IN ('solo','professional','growth','command','sovereign'));
+    CHECK (tier IN ('solo','practice','boutique','professional','growth','command','sovereign'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE signup_requests DROP CONSTRAINT IF EXISTS signup_requests_plan_check;
   ALTER TABLE signup_requests ADD CONSTRAINT signup_requests_plan_check
-    CHECK (plan IN ('solo','pro','growth','command','sovereign'));
+    CHECK (plan IN ('solo','practice','boutique','pro','growth','command','sovereign'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
