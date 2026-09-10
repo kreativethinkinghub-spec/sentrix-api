@@ -26,39 +26,39 @@ router.get('/:projectId', async (req, res) => {
 
   send('ready', { project_id: req.params.projectId, poll_ms: POLL_MS, ts: Date.now() });
 
-  let lastNotifId = null;
+  let lastNotifTs = null;
   let lastMilestoneUpdate = null;
   let lastRiskUpdate = null;
 
   const tick = async () => {
     try {
-      // New notifications
+      // New notifications addressed to this viewer
       const notifs = await query(
-        `SELECT id, title, body, severity, created_at FROM notifications
-         WHERE org_id = $1 ${lastNotifId ? 'AND id > $2' : ''}
-         ORDER BY id DESC LIMIT 20`,
-        lastNotifId ? [req.user.org_id, lastNotifId] : [req.user.org_id]
+        `SELECT id, type, title, body, is_read, created_at FROM notifications
+         WHERE user_id = $1 ${lastNotifTs ? 'AND created_at > $2' : ''}
+         ORDER BY created_at DESC LIMIT 20`,
+        lastNotifTs ? [req.user.id, lastNotifTs] : [req.user.id]
       );
       if (notifs.length) {
-        lastNotifId = notifs[0].id;
+        lastNotifTs = notifs[0].created_at;
         send('notifications', notifs.reverse());
       }
 
-      // Milestone status changes since last poll
+      // Milestone changes since last poll — milestones has no updated_at, use created_at
       const ms = await query(
-        `SELECT id, name, status, due_date, updated_at FROM milestones
-         WHERE project_id = $1 ${lastMilestoneUpdate ? 'AND updated_at > $2' : ''}
-         ORDER BY updated_at DESC LIMIT 10`,
+        `SELECT id, title, status, due_date, created_at FROM milestones
+         WHERE project_id = $1 ${lastMilestoneUpdate ? 'AND created_at > $2' : ''}
+         ORDER BY created_at DESC LIMIT 10`,
         lastMilestoneUpdate ? [req.params.projectId, lastMilestoneUpdate] : [req.params.projectId]
       );
       if (ms.length) {
-        lastMilestoneUpdate = ms[0].updated_at;
+        lastMilestoneUpdate = ms[0].created_at;
         send('milestones', ms);
       }
 
-      // Risk register deltas
+      // Risk register deltas — schema uses probability, impact, rag_status
       const risks = await query(
-        `SELECT id, title, likelihood, impact, status, updated_at FROM risks
+        `SELECT id, title, probability, impact, rag_status, status, updated_at FROM risks
          WHERE project_id = $1 ${lastRiskUpdate ? 'AND updated_at > $2' : ''}
          ORDER BY updated_at DESC LIMIT 10`,
         lastRiskUpdate ? [req.params.projectId, lastRiskUpdate] : [req.params.projectId]

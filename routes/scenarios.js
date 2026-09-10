@@ -78,13 +78,20 @@ router.post('/', CAN_MODEL, async (req, res) => {
     const { project_id, name, description, scenario_budget, scenario_duration_days, scenario_team_size, notes } = req.body;
     if (!project_id || !name) return res.status(400).json({ error: 'project_id and name required' });
 
-    // Pull the current baseline
-    const project = await queryOne('SELECT budget, duration, team_size FROM projects WHERE id = $1', [project_id]);
+    // Pull the current baseline — projects has budget_total + start/end dates + members count
+    const project = await queryOne(
+      `SELECT p.budget_total, p.start_date, p.target_end_date,
+              (SELECT COUNT(*)::int FROM project_members pm WHERE pm.project_id = p.id) AS team_size
+       FROM projects p WHERE p.id = $1`,
+      [project_id]
+    );
     if (!project) return res.status(404).json({ error: 'project not found' });
-
+    const durationDays = project.start_date && project.target_end_date
+      ? Math.round((new Date(project.target_end_date) - new Date(project.start_date)) / 86400000)
+      : 0;
     const base = {
-      budget: Number(project.budget) || 0,
-      duration: Number(project.duration) || 0,
+      budget: Number(project.budget_total) || 0,
+      duration: durationDays,
       team: Number(project.team_size) || 0,
     };
     const scenario = {

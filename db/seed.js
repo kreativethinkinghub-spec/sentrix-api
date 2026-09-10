@@ -14,7 +14,7 @@ try {
   } else {
     const org = await queryOne(
       'INSERT INTO organisations (name, slug, industry, tier) VALUES ($1, $2, $3, $4) RETURNING *',
-      [ORG_NAME, 'kth-projects', 'Technology & PMO', 'enterprise']
+      [ORG_NAME, 'kth-projects', 'Technology & PMO', 'command']
     );
 
     const hash = await bcrypt.hash(ADMIN_PASS, 12);
@@ -55,11 +55,14 @@ try {
       { title: 'Political leadership change risk — 3 provincial elections', rag: 'amber', prob: 2, impact: 4 },
     ];
 
+    // Risks table uses text enums, not numeric 1-5. Map the seed's 1..5 to the
+    // ('very-low','low','medium','high','very-high') buckets the CHECK allows.
+    const RANK = ['very-low', 'very-low', 'low', 'medium', 'high', 'very-high'];
     for (const r of risks) {
       await queryOne(
         `INSERT INTO risks (project_id, title, rag_status, probability, impact, type, created_by)
          VALUES ($1, $2, $3, $4, $5, 'risk', $6)`,
-        [project.id, r.title, r.rag, r.prob, r.impact, user.id]
+        [project.id, r.title, r.rag, RANK[r.prob] || 'medium', RANK[r.impact] || 'medium', user.id]
       );
     }
 
@@ -82,11 +85,12 @@ try {
       );
     }
 
+    // Schema allows: pending | on-track | at-risk | overdue | completed
     const milestones = [
-      { title: 'Project Kickoff & Team Onboarding', status: 'complete', due: '2025-12-15' },
-      { title: 'Infrastructure & Environment Setup', status: 'complete', due: '2026-02-28' },
-      { title: 'IoT Sensor Network Phase 1', status: 'complete', due: '2026-01-08' },
-      { title: 'Core System Development', status: 'in-progress', due: '2027-08-30' },
+      { title: 'Project Kickoff & Team Onboarding', status: 'completed', due: '2025-12-15' },
+      { title: 'Infrastructure & Environment Setup', status: 'completed', due: '2026-02-28' },
+      { title: 'IoT Sensor Network Phase 1', status: 'completed', due: '2026-01-08' },
+      { title: 'Core System Development', status: 'on-track', due: '2027-08-30' },
       { title: 'SCADA Modernisation', status: 'at-risk', due: '2026-09-30' },
       { title: 'Phase 2 Rollout — EC, FS, MP', status: 'at-risk', due: '2027-03-31' },
       { title: 'National Go-Live', status: 'pending', due: '2027-12-31' },
