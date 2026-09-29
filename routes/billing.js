@@ -7,7 +7,13 @@ const router = Router();
 
 // Available plans + whether billing is configured (for the pricing UI).
 router.get('/plans', (req, res) => {
-  res.json({ tiers: ps.TIERS, configured: ps.hasKeys(), public_key: ps.publicKey() });
+  res.json({
+    tiers: ps.TIERS,
+    currency: 'ZAR',
+    billing_cycles: ['annual'],
+    configured: ps.hasKeys(),
+    public_key: ps.publicKey(),
+  });
 });
 
 // Current org's subscription + recent payments.
@@ -31,11 +37,24 @@ router.get('/', async (req, res) => {
 // Start a subscription — org admin only. Returns a Paystack authorization_url.
 router.post('/subscribe', requireOrgAdmin, async (req, res) => {
   try {
-    if (!ps.hasKeys()) return res.status(503).json({ error: 'Billing is not configured yet' });
-    const { tier, billing_cycle } = req.body;
-    const cycle = billing_cycle === 'annual' ? 'annual' : 'monthly';
+    const { tier, billing_cycle } = req.body || {};
+    if (billing_cycle != null && billing_cycle !== 'annual') {
+      return res.status(400).json({ error: 'SENTRIX is annual-only; billing_cycle must be "annual"' });
+    }
+
+    const plan = ps.TIERS[tier];
+    if (!plan) return res.status(400).json({ error: 'Invalid tier' });
+    if (plan.purchase_mode === 'invoice') {
+      return res.status(400).json({ error: `${plan.name} is invoice-led — use /api/subscribe/invoice` });
+    }
+    if (plan.purchase_mode === 'contact') {
+      return res.status(400).json({ error: `${plan.name} requires contact sales` });
+    }
+
+    const cycle = 'annual';
     const amount = ps.priceFor(tier, cycle);
-    if (!amount) return res.status(400).json({ error: 'Invalid tier — Sovereign is contact-sales only' });
+    if (!amount) return res.status(400).json({ error: 'Tier is not available for self-service checkout' });
+    if (!ps.hasKeys()) return res.status(503).json({ error: 'Billing is not configured yet' });
 
     const user = await queryOne('SELECT email FROM users WHERE id = $1', [req.user.id]);
     const reference = ps.ref('sx');
@@ -48,7 +67,7 @@ router.post('/subscribe', requireOrgAdmin, async (req, res) => {
     const callback_url = (process.env.APP_URL || 'https://sentrix-pmo.com') + '/dashboard.html?billing=return';
     const data = await ps.initTransaction({
       email: user.email, amount, reference, callback_url,
-      metadata: { org_id: req.user.org_id, tier, cycle },
+      metadata: { org_id: req.user.org_id, tier, billing_cycle: cycle },
     });
     res.json({ authorization_url: data.authorization_url, reference });
   } catch (err) {

@@ -5,19 +5,44 @@ import crypto from 'crypto';
 export function hasKeys() { return !!process.env.PAYSTACK_SECRET_KEY; }
 export function publicKey() { return process.env.PAYSTACK_PUBLIC_KEY || ''; }
 
-// Org subscription tiers (ZAR). Matches the site pricing.
-// Sovereign is custom (government/SOE) — no self-serve checkout.
-export const TIERS = {
-  professional: { name: 'Professional', monthly: 1100, annual: 13200, blurb: 'Single PMO' },
-  growth:       { name: 'Growth',       monthly: 3300, annual: 39600, blurb: 'Multi-Project PMO' },
-  command:      { name: 'Command',      monthly: 9200, annual: 110400, blurb: 'Full Command Centre' },
-  sovereign:    { name: 'Sovereign',    custom: true, blurb: 'Government & SOEs — contact sales' },
-};
+// Org subscription tiers (ZAR). SENTRIX is annual-only.
+// purchase_mode is part of the public /api/billing/plans contract and keeps
+// non-checkout tiers visible without accidentally making them payable online.
+export const TIERS = Object.freeze({
+  solo: {
+    name: 'Solo', annual: 4988, purchase_mode: 'self_service',
+    blurb: '1 user · 3 projects',
+  },
+  practice: {
+    name: 'Practice', annual: 14988, purchase_mode: 'self_service',
+    blurb: '1 user · unlimited projects',
+  },
+  boutique: {
+    name: 'Boutique', annual: 34988, purchase_mode: 'self_service',
+    blurb: '3 users · unlimited projects',
+  },
+  professional: {
+    name: 'Professional', purchase_mode: 'contact', contact: true,
+    blurb: 'Bespoke · 5+ users — contact for pricing',
+  },
+  growth: {
+    name: 'Growth', annual: 158388, purchase_mode: 'self_service',
+    blurb: 'Multi-project PMO',
+  },
+  command: {
+    name: 'Command', purchase_mode: 'invoice', invoice: true,
+    blurb: 'Full Command Centre — invoice-led',
+  },
+  sovereign: {
+    name: 'Sovereign', purchase_mode: 'contact', contact: true, custom: true,
+    blurb: 'Government & SOEs — contact sales',
+  },
+});
 
 export function priceFor(tier, cycle) {
   const t = TIERS[tier];
-  if (!t || t.custom) return null;
-  return cycle === 'annual' ? t.annual : t.monthly;
+  if (cycle !== 'annual' || !t || t.purchase_mode !== 'self_service') return null;
+  return Number.isFinite(t.annual) ? t.annual : null;
 }
 
 // Initialize a transaction; returns { authorization_url, reference } to redirect the payer to.
